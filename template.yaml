@@ -1,0 +1,98 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  stale-ticket-bot
+  Checks for stale Jira tickets and posts a Slack reminder on weekday mornings.
+
+Parameters:
+  StaleDays:
+    Type: Number
+    Default: 7
+    Description: Number of days without activity before a ticket is considered stale
+  AlertEmail:
+    Type: String
+    Description: Email address for DLQ alarm notifications
+
+Globals:
+  Function:
+    Timeout: 30
+    MemorySize: 128
+    Runtime: python3.12
+    Architectures:
+      - x86_64
+    Environment:
+      Variables:
+        STALE_DAYS: !Ref StaleDays
+
+Resources:
+
+  StaleTicketBotDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: stale-ticket-bot-dlq
+      MessageRetentionPeriod: 1209600  # 14 days
+
+  StaleTicketBotFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/
+      Handler: handler.lambda_handler
+      DeadLetterQueue:
+        Type: SQS
+        TargetArn: !GetAtt StaleTicketBotDLQ.Arn
+      Policies:
+        - SQSSendMessagePolicy:
+            QueueName: !GetAtt StaleTicketBotDLQ.QueueName
+        - Statement:
+            - Effect: Allow
+              Action:
+                - secretsmanager:GetSecretValue
+              Resource:
+                - !Sub arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:stale-bot/jira-api-token*
+                - !Sub arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:stale-bot/slack-webhook-url*
+      Events:
+        WeekdayMorningSchedule:
+          Type: Schedule
+          Properties:
+            Schedule: cron(0 13 ? * MON-FRI *)
+            Name: stale-ticket-bot-schedule
+            Description: Runs at 9AM ET on weekdays
+            Enabled: true
+
+  DLQAlarmTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: stale-ticket-bot-dlq-alarm
+      Subscription:
+        - Protocol: email
+          Endpoint: !Ref AlertEmail
+
+  DLQAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: stale-ticket-bot-dlq-depth
+      AlarmDescription: Messages in the DLQ indicate Lambda failures
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt StaleTicketBotDLQ.QueueName
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      AlarmActions:
+        - !Ref DLQAlarmTopic
+      TreatMissingData: notBreaching
+
+Outputs:
+  StaleTicketBotFunction:
+    Description: Lambda Function ARN
+    Value: !GetAtt StaleTicketBotFunction.Arn
+  StaleTicketBotDLQ:
+    Description: Dead Letter Queue URL
+    Value: !Ref StaleTicketBotDLQ
+  DLQAlarmTopic:
+    Description: SNS Topic ARN for DLQ alerts
+    Value: !Ref DLQAlarmTopic

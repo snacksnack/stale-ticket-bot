@@ -1,0 +1,6 @@
+pytest
+pytest-cov
+boto3
+moto[secretsmanager]
+responses
+flake8
