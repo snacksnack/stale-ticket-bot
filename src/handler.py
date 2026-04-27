@@ -11,7 +11,10 @@ def lambda_handler(event, context):
     Triggered by EventBridge on weekday mornings.
     Fetches stale Jira tickets and posts a Slack reminder.
     """
-    logger.info(json.dumps({"message": "stale-ticket-bot started", "event": event}))
+    logger.info(json.dumps({
+        "message": "stale-ticket-bot started",
+        "event": event
+    }))
 
     # TODO: fetch secrets from Secrets Manager
     # TODO: instantiate JiraClient and fetch stale tickets
