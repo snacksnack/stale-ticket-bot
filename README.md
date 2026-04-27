@@ -118,6 +118,20 @@ ORDER BY updated ASC
 - `updated <= "-7d"` — `updated` covers all activity types; driven by the `STALE_DAYS` CloudFormation parameter at runtime
 - `ORDER BY updated ASC` — most neglected tickets surface first
 
+## Block Kit Message Structure
+
+- Returns `None` when `tickets` is empty so the handler can skip the Slack POST entirely rather than sending an empty message
+- Dividers appear between tickets, not after the last one
+- The header uses singular/plural ("1 ticket" vs "2 tickets")
+- Unassigned tickets show `Unassigned` rather than a blank field
+- Each ticket's summary appears on its own line for readability
+
+## Slack Webhook Behaviour
+
+- The response body is checked in addition to the HTTP status — Slack can return `200` with an error string (e.g. `invalid_payload`) if the JSON is malformed, so a `200` alone is not sufficient to confirm success
+- The HTTP status and response body are always logged before any exception is raised, so failures are observable in CloudWatch even when the exception is caught upstream
+- `post_message` returns `None`; callers only need to handle the happy path or catch `SlackClientError`
+
 ## Architecture
 
 ```
