@@ -1,8 +1,18 @@
 import json
 import logging
+import os
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
+
+_STALE_DAYS = int(os.environ.get("STALE_DAYS", "7"))
+_JQL = (
+    f'project = RC1 '
+    f'AND status in ("To Do", "In Progress", "In Review") '
+    f'AND issueType != Epic '
+    f'AND updated <= "-{_STALE_DAYS}d" '
+    f'ORDER BY updated ASC'
+)
 
 
 def lambda_handler(event, context):

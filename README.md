@@ -100,6 +100,24 @@ sam validate
 sam local invoke StaleTicketBotFunction --event events/event.json
 ```
 
+## Staleness Definition
+
+A ticket is considered stale when it has had no activity (comments, field edits, status transitions) for `STALE_DAYS` days (default: 7) and is still open.
+
+**JQL query:**
+```
+project = RC1
+AND status in ("To Do", "In Progress", "In Review")
+AND issueType != Epic
+AND updated <= "-7d"
+ORDER BY updated ASC
+```
+
+- `status in (...)` — targets only active workflow states; excludes `Idea` (ungroomed backlog) and `Done`
+- `issueType != Epic` — excludes Epics, which are intentionally long-lived
+- `updated <= "-7d"` — `updated` covers all activity types; driven by the `STALE_DAYS` CloudFormation parameter at runtime
+- `ORDER BY updated ASC` — most neglected tickets surface first
+
 ## Architecture
 
 ```
