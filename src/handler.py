@@ -2,8 +2,39 @@ import json
 import logging
 import os
 
-logger = logging.getLogger()
-logger.setLevel(logging.INFO)
+import boto3
+
+from jira_client import JiraClient
+from message_builder import build_stale_ticket_message
+from slack_client import SlackClient
+
+_LOG_RECORD_BUILTINS = frozenset(
+    logging.LogRecord("", 0, "", 0, "", (), None).__dict__
+)
+
+
+class _JsonFormatter(logging.Formatter):
+    def format(self, record):
+        entry = {
+            "level": record.levelname,
+            "message": record.getMessage(),
+            "timestamp": self.formatTime(record, "%Y-%m-%dT%H:%M:%SZ"),
+        }
+        extras = {
+            k: v for k, v in record.__dict__.items()
+            if k not in _LOG_RECORD_BUILTINS
+        }
+        entry.update(extras)
+        return json.dumps(entry)
+
+
+_handler = logging.StreamHandler()
+_handler.setFormatter(_JsonFormatter())
+_root = logging.getLogger()
+_root.setLevel(logging.INFO)
+_root.handlers = [_handler]
+
+logger = logging.getLogger(__name__)
 
 _STALE_DAYS = int(os.environ.get("STALE_DAYS", "7"))
 _JQL = (
@@ -13,22 +44,44 @@ _JQL = (
     f'AND updated <= "-{_STALE_DAYS}d" '
     f'ORDER BY updated ASC'
 )
+_secrets = boto3.client("secretsmanager")
 
 
 def lambda_handler(event, context):
-    """
-    Stale Ticket Bot — Lambda entry point.
-    Triggered by EventBridge on weekday mornings.
-    Fetches stale Jira tickets and posts a Slack reminder.
-    """
-    logger.info(json.dumps({
-        "message": "stale-ticket-bot started",
-        "event": event
-    }))
+    logger.info("stale-ticket-bot started", extra={"jql_used": _JQL})
+    try:
+        jira_raw = _secrets.get_secret_value(
+            SecretId="stale-bot/jira-api-token"
+        )["SecretString"]
+        jira_secret = json.loads(jira_raw)
+        slack_url = _secrets.get_secret_value(
+            SecretId="stale-bot/slack-webhook-url"
+        )["SecretString"]
 
-    # TODO: fetch secrets from Secrets Manager
-    # TODO: instantiate JiraClient and fetch stale tickets
-    # TODO: build Block Kit message
-    # TODO: post to Slack
+        jira = JiraClient(
+            base_url=os.environ["JIRA_BASE_URL"],
+            email=jira_secret["email"],
+            api_token=jira_secret["api_token"],
+        )
+        tickets = jira.get_stale_tickets(_JQL)
 
-    logger.info(json.dumps({"message": "stale-ticket-bot completed"}))
+        if not tickets:
+            logger.info("no stale tickets found, skipping Slack post")
+            return
+
+        payload = build_stale_ticket_message(tickets, _STALE_DAYS)
+        SlackClient(slack_url).post_message(payload)
+
+        logger.info(
+            "stale-ticket-bot completed",
+            extra={"ticket_count": len(tickets)},
+        )
+    except Exception as exc:
+        logger.error(
+            "stale-ticket-bot failed",
+            extra={
+                "error": str(exc),
+                "error_type": type(exc).__name__,
+            },
+        )
+        raise

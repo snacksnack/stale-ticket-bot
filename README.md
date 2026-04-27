@@ -118,6 +118,13 @@ ORDER BY updated ASC
 - `updated <= "-7d"` — `updated` covers all activity types; driven by the `STALE_DAYS` CloudFormation parameter at runtime
 - `ORDER BY updated ASC` — most neglected tickets surface first
 
+## Lambda Handler
+
+- `boto3.client("secretsmanager")` is initialised at module level so it is reused across warm Lambda invocations rather than re-created on every call
+- `JIRA_BASE_URL` is read via `os.environ["JIRA_BASE_URL"]` (not `.get()`) so the function fails loudly at startup if the variable is missing, rather than producing a confusing error later
+- `JIRA_BASE_URL` is a CloudFormation parameter (not a secret) — supply your Jira instance URL (e.g. `https://your-org.atlassian.net`) at deploy time
+- If no stale tickets are found the handler logs and returns early without posting to Slack
+
 ## Block Kit Message Structure
 
 - Returns `None` when `tickets` is empty so the handler can skip the Slack POST entirely rather than sending an empty message

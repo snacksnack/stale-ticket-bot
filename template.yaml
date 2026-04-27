@@ -7,8 +7,10 @@ Description: >
 Parameters:
   StaleDays:
     Type: Number
-    Default: 7
     Description: Number of days without activity before a ticket is considered stale
+  JiraBaseUrl:
+    Type: String
+    Description: Jira instance base URL (e.g. https://your-org.atlassian.net)
   AlertEmail:
     Type: String
     Description: Email address for DLQ alarm notifications
@@ -23,6 +25,7 @@ Globals:
     Environment:
       Variables:
         STALE_DAYS: !Ref StaleDays
+        JIRA_BASE_URL: !Ref JiraBaseUrl
 
 Resources:
 

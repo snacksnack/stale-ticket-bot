@@ -1,8 +1,11 @@
 import base64
 import json
+import logging
 import urllib.parse
 import urllib3
 from datetime import datetime, timezone
+
+logger = logging.getLogger(__name__)
 
 
 class JiraClientError(Exception):
@@ -28,6 +31,7 @@ class JiraClient:
             "fields": "summary,status,assignee,updated",
         })
         url = f"{self.base_url}/rest/api/3/search?{params}"
+        logger.info("fetching stale tickets", extra={"jql_used": jql})
         response = self._http.request("GET", url, headers=self._headers)
         if response.status != 200:
             raise JiraClientError(
@@ -51,4 +55,8 @@ class JiraClient:
                 "url": f"{self.base_url}/browse/{issue['key']}",
                 "days_stale": (today - updated).days,
             })
+        logger.info(
+            "stale tickets fetched",
+            extra={"ticket_count": len(tickets)},
+        )
         return tickets

@@ -22,10 +22,10 @@ class SlackClient:
             headers={"Content-Type": "application/json"},
         )
         body = response.data.decode()
-        logger.info(json.dumps({
-            "slack_status": response.status,
-            "slack_response": body,
-        }))
+        logger.info(
+            "slack webhook response",
+            extra={"slack_status": response.status, "slack_response": body},
+        )
         if response.status != 200 or body != "ok":
             raise SlackClientError(
                 f"Slack webhook returned {response.status}: {body}"
