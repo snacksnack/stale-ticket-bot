@@ -55,4 +55,12 @@ jobs:
         run: sam build
 
       - name: Deploy
-        run: sam deploy --no-confirm-changeset --stack-name ${{ env.STACK_NAME }} --region ${{ env.AWS_REGION }} --parameter-overrides AlertEmail=${{ secrets.ALERT_EMAIL }}
+        run: >
+          sam deploy
+          --no-confirm-changeset
+          --stack-name ${{ env.STACK_NAME }}
+          --region ${{ env.AWS_REGION }}
+          --parameter-overrides
+          AlertEmail=${{ secrets.ALERT_EMAIL }}
+          JiraBaseUrl=${{ secrets.JIRA_BASE_URL }}
+          StaleDays=${{ secrets.STALE_DAYS }}
