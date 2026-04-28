@@ -13,7 +13,7 @@ class SlackClient:
         self._webhook_url = webhook_url
 
     def post_message(self, payload: dict) -> None:
-        response = requests.post(self._webhook_url, json=payload)
+        response = requests.post(self._webhook_url, json=payload, timeout=5)
         body = response.text
         logger.info(
             "slack webhook response",

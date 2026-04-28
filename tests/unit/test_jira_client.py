@@ -72,6 +72,15 @@ def test_empty_issues_returns_empty_list():
 
 
 @responses.activate
+def test_non_json_response_raises_jira_client_error():
+    responses.add(responses.GET, SEARCH_URL, body="<html>Bad Gateway</html>", status=200,
+                  content_type="text/html")
+
+    with pytest.raises(JiraClientError, match="non-JSON"):
+        JiraClient(BASE_URL, EMAIL, TOKEN).get_stale_tickets("project = RC1")
+
+
+@responses.activate
 def test_permanent_error_raises_jira_client_error_immediately():
     responses.add(responses.GET, SEARCH_URL, body="Unauthorized", status=401)
 
@@ -118,6 +127,24 @@ def test_jql_with_different_stale_days_encoded_in_url():
 
     assert "7d" in responses.calls[0].request.url
     assert "14d" in responses.calls[1].request.url
+
+
+@responses.activate
+@patch("jira_client.datetime")
+def test_warns_when_total_exceeds_max_results(mock_dt, caplog):
+    mock_dt.now.return_value.date.return_value = FIXED_TODAY
+    mock_dt.fromisoformat = datetime.fromisoformat
+    responses.add(
+        responses.GET, SEARCH_URL,
+        json={"total": 99, "issues": [ISSUE]},
+        status=200,
+    )
+
+    import logging
+    with caplog.at_level(logging.WARNING, logger="jira_client"):
+        JiraClient(BASE_URL, EMAIL, TOKEN).get_stale_tickets("project = RC1", max_results=50)
+
+    assert any("truncated" in r.message for r in caplog.records)
 
 
 @responses.activate

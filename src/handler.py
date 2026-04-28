@@ -25,7 +25,7 @@ class _JsonFormatter(logging.Formatter):
             if k not in _LOG_RECORD_BUILTINS
         }
         entry.update(extras)
-        return json.dumps(entry)
+        return json.dumps(entry, default=str)
 
 
 _handler = logging.StreamHandler()
@@ -36,9 +36,10 @@ _root.handlers = [_handler]
 
 logger = logging.getLogger(__name__)
 
-_STALE_DAYS = int(os.environ.get("STALE_DAYS", "7"))
+_STALE_DAYS = int(os.environ["STALE_DAYS"])
+_PROJECT_KEY = os.environ["JIRA_PROJECT_KEY"]
 _JQL = (
-    f'project = RC1 '
+    f'project = {_PROJECT_KEY} '
     f'AND status in ("To Do", "In Progress", "In Review") '
     f'AND issueType != Epic '
     f'AND updated <= "-{_STALE_DAYS}d" '
@@ -66,14 +67,17 @@ def lambda_handler(event, context):
         )
         tickets = jira.get_stale_tickets(_JQL)
 
-        _cloudwatch.put_metric_data(
-            Namespace="StaleTicketBot",
-            MetricData=[{
-                "MetricName": "StaleTicketCount",
-                "Value": len(tickets),
-                "Unit": "Count",
-            }],
-        )
+        try:
+            _cloudwatch.put_metric_data(
+                Namespace="StaleTicketBot",
+                MetricData=[{
+                    "MetricName": "StaleTicketCount",
+                    "Value": len(tickets),
+                    "Unit": "Count",
+                }],
+            )
+        except Exception as exc:
+            logger.warning("metric emit failed", extra={"error": str(exc)})
 
         if not tickets:
             logger.info("no stale tickets found, skipping Slack post")

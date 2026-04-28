@@ -19,7 +19,7 @@ TICKET = {
     "days_stale": 10,
 }
 
-ENV = {"JIRA_BASE_URL": "https://jira.example.com"}
+ENV = {"JIRA_BASE_URL": "https://jira.example.com", "JIRA_PROJECT_KEY": "RC1", "STALE_DAYS": "7"}
 
 
 def _secrets_side_effect(*_args, SecretId=None, **_kwargs):
@@ -140,3 +140,18 @@ def test_emits_zero_count_when_no_tickets(mock_jira_cls, mock_slack_cls, mock_se
             "Unit": "Count",
         }],
     )
+
+
+@patch.dict(os.environ, ENV)
+@patch("handler._cloudwatch")
+@patch("handler._secrets")
+@patch("handler.SlackClient")
+@patch("handler.JiraClient")
+def test_metric_failure_does_not_fail_lambda(mock_jira_cls, mock_slack_cls, mock_secrets, mock_cw):
+    mock_secrets.get_secret_value.side_effect = _secrets_side_effect
+    mock_jira_cls.return_value.get_stale_tickets.return_value = [TICKET]
+    mock_cw.put_metric_data.side_effect = Exception("throttled")
+
+    handler.lambda_handler({}, {})
+
+    mock_slack_cls.return_value.post_message.assert_called_once()

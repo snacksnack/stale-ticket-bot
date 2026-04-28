@@ -37,7 +37,7 @@ _AWS_ENV = {
 
 
 @mock_aws
-@patch.dict(os.environ, {"JIRA_BASE_URL": JIRA_BASE_URL, **_AWS_ENV})
+@patch.dict(os.environ, {"JIRA_BASE_URL": JIRA_BASE_URL, "JIRA_PROJECT_KEY": "RC1", "STALE_DAYS": "7", **_AWS_ENV})
 def test_handler_end_to_end_posts_to_slack():
     # Seed Secrets Manager with test credentials.
     sm = boto3.client("secretsmanager", region_name="us-east-1")

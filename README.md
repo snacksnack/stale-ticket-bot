@@ -65,7 +65,7 @@ Deployments run via GitHub Actions using OIDC — no long-lived AWS keys are sto
 | OIDC provider | `token.actions.githubusercontent.com` |
 | Deploy role ARN | `arn:aws:iam::727323477998:role/stale-ticket-bot-deploy-role` |
 
-The trust policy is scoped to the `snacksnack/stale-ticket-bot` repository. The role grants only what SAM needs: CloudFormation, Lambda, S3, IAM role creation, SQS, and EventBridge.
+The trust policy is scoped to the `snacksnack/stale-ticket-bot` repository. The role grants only what SAM needs: CloudFormation, Lambda, S3, IAM role creation, SQS, EventBridge Rules (for deletion of the old rule during migration), and EventBridge Scheduler.
 
 ## Deployment
 
@@ -159,6 +159,7 @@ AND updated <= "-7d"
 ORDER BY updated ASC
 ```
 
+- `project = RC1` — driven by the `JiraProjectKey` CloudFormation parameter at runtime; change it to target a different project without touching code
 - `status in (...)` — targets only active workflow states; excludes `Idea` (ungroomed backlog) and `Done`
 - `issueType != Epic` — excludes Epics, which are intentionally long-lived
 - `updated <= "-7d"` — `updated` covers all activity types; driven by the `STALE_DAYS` CloudFormation parameter at runtime
@@ -167,8 +168,8 @@ ORDER BY updated ASC
 ## Lambda Handler
 
 - `boto3.client("secretsmanager")` and `boto3.client("cloudwatch")` are initialised at module level so they are reused across warm Lambda invocations rather than re-created on every call
-- `JIRA_BASE_URL` is read via `os.environ["JIRA_BASE_URL"]` (not `.get()`) so the function fails loudly at startup if the variable is missing, rather than producing a confusing error later
-- `JIRA_BASE_URL` is a CloudFormation parameter (not a secret) — supply your Jira instance URL (e.g. `https://your-org.atlassian.net`) at deploy time
+- `STALE_DAYS`, `JIRA_BASE_URL`, and `JIRA_PROJECT_KEY` are all read via `os.environ[...]` (not `.get()`) so the function fails loudly at cold start if any variable is missing or misconfigured — a deploy with a missing parameter surfaces immediately rather than running silently with a wrong value
+- All three are CloudFormation parameters (not secrets) — supply them at deploy time
 - After every successful Jira fetch the handler emits a `StaleTicketCount` custom metric — including when the count is 0 — so gaps in the metric are meaningful rather than ambiguous
 - If no stale tickets are found the handler logs and returns early without posting to Slack
 
@@ -181,6 +182,8 @@ The handler emits one custom CloudWatch metric per invocation:
 | `StaleTicketBot` | `StaleTicketCount` | Count | Number of stale tickets found; emitted even when 0 so the metric is always present |
 
 The metric is only emitted after a successful Jira API call. If the call fails (and the event lands in the DLQ), no metric is emitted for that invocation, which itself acts as a signal.
+
+Metric emission is best-effort — if `put_metric_data` throws (e.g. CloudWatch throttling), the error is logged as a warning and the invocation continues. A metrics failure does not prevent the Slack post or fail the Lambda.
 
 You can graph `StaleTicketCount` over time in CloudWatch and set an alarm if it rises above a threshold that would indicate an unusual backlog.
 
@@ -202,6 +205,7 @@ Transient Jira API errors (HTTP 429, 500, 502, 503, 504) are retried automatical
 | Backoff | Exponential — 1s, 2s, 4s (capped at 8s) |
 | Retry on | `JiraTransientError` (subclass of `JiraClientError`) |
 | After exhaustion | Re-raises `JiraTransientError`; handler logs and re-raises, landing the event in the DLQ |
+| Request timeout | 10 seconds — raises `requests.exceptions.Timeout` on hang; not retried (not a `JiraTransientError`) |
 
 `JiraTransientError` is a subclass of `JiraClientError` so callers that catch `JiraClientError` continue to work without changes.
 
@@ -210,6 +214,7 @@ Transient Jira API errors (HTTP 429, 500, 502, 503, 504) are retried automatical
 - The response body is checked in addition to the HTTP status — Slack can return `200` with an error string (e.g. `invalid_payload`) if the JSON is malformed, so a `200` alone is not sufficient to confirm success
 - The HTTP status and response body are always logged before any exception is raised, so failures are observable in CloudWatch even when the exception is caught upstream
 - `post_message` returns `None`; callers only need to handle the happy path or catch `SlackClientError`
+- Request timeout is 5 seconds — raises `requests.exceptions.Timeout` if Slack hangs; the exception propagates to the handler and lands the event in the DLQ
 
 ## Alarms
 
@@ -226,7 +231,7 @@ All three alarms send email via the `DLQAlarmTopic` SNS topic (address set by th
 ## Architecture
 
 ```
-EventBridge (cron, 9 AM ET weekdays)
+EventBridge Scheduler (cron, 9 AM ET weekdays, America/New_York timezone)
     └── Lambda (StaleTicketBotFunction)
             ├── Secrets Manager (jira-api-token, slack-webhook-url)
             ├── Jira REST API  →  fetch stale tickets
@@ -245,7 +250,9 @@ EventBridge (cron, 9 AM ET weekdays)
 | `src/message_builder.py` | `build_stale_ticket_message(tickets, stale_days)` |
 | `src/slack_client.py` | `post_message(payload)` |
 
-**Configuration:** `STALE_DAYS` is a CloudFormation parameter (default: 7), passed to the Lambda as an environment variable.
+**Configuration:** `STALE_DAYS`, `JiraBaseUrl`, and `JiraProjectKey` are CloudFormation parameters passed to the Lambda as environment variables.
+
+**Schedule:** Uses `AWS::Scheduler::Schedule` (EventBridge Scheduler) with `ScheduleExpressionTimezone: America/New_York` so the 9AM trigger is timezone-aware and automatically adjusts for EST/EDT transitions. The older `AWS::Events::Rule` (SAM `Type: Schedule` shorthand) only supports UTC and would drift by one hour each time DST changes.
 
 ## Cleanup
 

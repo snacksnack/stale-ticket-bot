@@ -11,6 +11,9 @@ Parameters:
   JiraBaseUrl:
     Type: String
     Description: Jira instance base URL (e.g. https://your-org.atlassian.net)
+  JiraProjectKey:
+    Type: String
+    Description: Jira project key to query for stale tickets (e.g. RC1)
   AlertEmail:
     Type: String
     Description: Email address for DLQ alarm notifications
@@ -21,11 +24,12 @@ Globals:
     MemorySize: 128
     Runtime: python3.12
     Architectures:
-      - x86_64
+      - arm64
     Environment:
       Variables:
         STALE_DAYS: !Ref StaleDays
         JIRA_BASE_URL: !Ref JiraBaseUrl
+        JIRA_PROJECT_KEY: !Ref JiraProjectKey
 
 Resources:
 
@@ -57,19 +61,43 @@ Resources:
               Action:
                 - cloudwatch:PutMetricData
               Resource: "*"
-      Events:
-        WeekdayMorningSchedule:
-          Type: Schedule
-          Properties:
-            Schedule: cron(0 13 ? * MON-FRI *)
-            Name: stale-ticket-bot-schedule
-            Description: Runs at 9AM ET on weekdays
-            Enabled: true
+  SchedulerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: scheduler.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: InvokeLambda
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: !GetAtt StaleTicketBotFunction.Arn
 
-  DLQAlarmTopic:
+  WeekdayMorningSchedule:
+    Type: AWS::Scheduler::Schedule
+    Properties:
+      Name: stale-ticket-bot-schedule
+      Description: Runs at 9AM ET on weekdays; timezone-aware so DST is handled automatically
+      ScheduleExpression: cron(0 9 ? * MON-FRI *)
+      ScheduleExpressionTimezone: America/New_York
+      FlexibleTimeWindow:
+        Mode: 'OFF'
+      State: ENABLED
+      Target:
+        Arn: !GetAtt StaleTicketBotFunction.Arn
+        RoleArn: !GetAtt SchedulerRole.Arn
+
+  AlertsTopic:
     Type: AWS::SNS::Topic
     Properties:
-      TopicName: stale-ticket-bot-dlq-alarm
+      TopicName: stale-ticket-bot-alerts
       Subscription:
         - Protocol: email
           Endpoint: !Ref AlertEmail
@@ -90,7 +118,7 @@ Resources:
       Threshold: 0
       ComparisonOperator: GreaterThanThreshold
       AlarmActions:
-        - !Ref DLQAlarmTopic
+        - !Ref AlertsTopic
       TreatMissingData: notBreaching
 
   LambdaErrorAlarm:
@@ -109,7 +137,7 @@ Resources:
       Threshold: 0
       ComparisonOperator: GreaterThanThreshold
       AlarmActions:
-        - !Ref DLQAlarmTopic
+        - !Ref AlertsTopic
       TreatMissingData: notBreaching
 
   LambdaInvocationsAlarm:
@@ -128,7 +156,7 @@ Resources:
       Threshold: 1
       ComparisonOperator: LessThanThreshold
       AlarmActions:
-        - !Ref DLQAlarmTopic
+        - !Ref AlertsTopic
       TreatMissingData: breaching
 
 Outputs:
@@ -138,9 +166,9 @@ Outputs:
   StaleTicketBotDLQ:
     Description: Dead Letter Queue URL
     Value: !Ref StaleTicketBotDLQ
-  DLQAlarmTopic:
-    Description: SNS Topic ARN for DLQ alerts
-    Value: !Ref DLQAlarmTopic
+  AlertsTopic:
+    Description: SNS Topic ARN for alerts
+    Value: !Ref AlertsTopic
   LambdaErrorAlarm:
     Description: CloudWatch Alarm ARN for Lambda errors
     Value: !GetAtt LambdaErrorAlarm.Arn

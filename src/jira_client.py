@@ -36,7 +36,7 @@ class JiraClient:
             "jql": jql,
             "maxResults": max_results,
             "fields": "summary,status,assignee,updated",
-        })
+        }, timeout=10)
         if response.status_code in _TRANSIENT_STATUS_CODES:
             raise JiraTransientError(
                 f"Jira API returned {response.status_code}: {response.text}"
@@ -45,9 +45,21 @@ class JiraClient:
             raise JiraClientError(
                 f"Jira API returned {response.status_code}: {response.text}"
             )
+        try:
+            data = response.json()
+        except requests.exceptions.JSONDecodeError as exc:
+            raise JiraClientError(
+                f"Jira API returned non-JSON response: {response.text[:200]}"
+            ) from exc
+        total = data.get("total", 0)
+        if total > max_results:
+            logger.warning(
+                "jira result truncated — increase max_results or add pagination",
+                extra={"total": total, "max_results": max_results},
+            )
         today = datetime.now(timezone.utc).date()
         tickets = []
-        for issue in response.json().get("issues", []):
+        for issue in data.get("issues", []):
             fields = issue["fields"]
             updated = datetime.fromisoformat(
                 fields["updated"].replace("Z", "+00:00")
