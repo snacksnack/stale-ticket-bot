@@ -1,8 +1,5 @@
-import base64
-import json
 import logging
-import urllib.parse
-import urllib3
+import requests
 from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
@@ -15,33 +12,25 @@ class JiraClientError(Exception):
 class JiraClient:
     def __init__(self, base_url: str, email: str, api_token: str):
         self.base_url = base_url.rstrip("/")
-        credentials = base64.b64encode(
-            f"{email}:{api_token}".encode()
-        ).decode()
-        self._headers = {
-            "Authorization": f"Basic {credentials}",
-            "Accept": "application/json",
-        }
-        self._http = urllib3.PoolManager()
+        self._session = requests.Session()
+        self._session.auth = (email, api_token)
+        self._session.headers["Accept"] = "application/json"
 
     def get_stale_tickets(self, jql: str, max_results: int = 50) -> list[dict]:
-        params = urllib.parse.urlencode({
+        url = f"{self.base_url}/rest/api/3/search"
+        logger.info("fetching stale tickets", extra={"jql_used": jql})
+        response = self._session.get(url, params={
             "jql": jql,
             "maxResults": max_results,
             "fields": "summary,status,assignee,updated",
         })
-        url = f"{self.base_url}/rest/api/3/search?{params}"
-        logger.info("fetching stale tickets", extra={"jql_used": jql})
-        response = self._http.request("GET", url, headers=self._headers)
-        if response.status != 200:
+        if response.status_code != 200:
             raise JiraClientError(
-                f"Jira API returned {response.status}: "
-                f"{response.data.decode()}"
+                f"Jira API returned {response.status_code}: {response.text}"
             )
-        data = json.loads(response.data)
         today = datetime.now(timezone.utc).date()
         tickets = []
-        for issue in data.get("issues", []):
+        for issue in response.json().get("issues", []):
             fields = issue["fields"]
             updated = datetime.fromisoformat(
                 fields["updated"].replace("Z", "+00:00")

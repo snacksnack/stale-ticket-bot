@@ -93,12 +93,58 @@ pip install -r tests/requirements.txt
 # Run unit tests
 python -m pytest tests/unit -v
 
+# Run unit tests with coverage report
+python -m pytest tests/unit -v --cov=src --cov-report=term-missing
+
 # Validate the SAM template
 sam validate
 
 # Local invoke with the sample EventBridge event
 sam local invoke StaleTicketBotFunction --event events/event.json
 ```
+
+## Testing
+
+Unit tests live in `tests/unit/` and an integration test in `tests/integration/`. Coverage is 100% across all of `src/`.
+
+```bash
+# Run unit tests only
+python -m pytest tests/unit -v
+
+# Run all tests (unit + integration)
+python -m pytest tests/unit tests/integration -v --cov=src --cov-report=term-missing
+```
+
+**HTTP client:** `jira_client.py` uses `requests.Session` (Basic auth via `session.auth`, JSON via `response.json()`). `slack_client.py` uses `requests.post(..., json=payload)`. Both use `requests` consistently so the `responses` library can intercept their calls in tests.
+
+**Unit test mocking:**
+
+`jira_client.py` and `slack_client.py` are tested with `@responses.activate` + `responses.add()` — no manual urllib3 patching needed.
+
+`handler.py` exposes a module-level `_secrets` boto3 client (intentional — reused across warm invocations). Unit tests patch `handler._secrets` directly, keeping them fast without a full moto environment.
+
+`tests/conftest.py` inserts `src/` into `sys.path` so all test files can import the Lambda source modules without packaging.
+
+**Integration test (`tests/integration/test_handler_integration.py`):**
+
+Exercises the full handler wiring end-to-end without hitting any real external APIs:
+
+- `@mock_aws` (moto) seeds Secrets Manager with test credentials
+- `responses.RequestsMock()` mocks the Jira search endpoint and Slack webhook
+- `handler._secrets` is patched with a boto3 client created inside the moto context
+- Assertions verify the exact Slack Block Kit payload — header text, ticket key, summary, and assignee
+
+A local `responses.RequestsMock()` context manager is used rather than the `@responses.activate` decorator because moto 5 touches the global `responses` state, which causes `responses.calls` to appear empty even when calls succeed. Using a local instance and reading from `rsps.calls` avoids this.
+
+**What is covered:**
+
+| Module | Scenarios |
+|--------|-----------|
+| `jira_client.py` | Happy path, null assignee, empty issue list, non-200 response, JQL encoding for different stale-day values, Basic auth header |
+| `slack_client.py` | Happy path, non-200 response, 200 with non-`ok` body, JSON body + Content-Type header |
+| `message_builder.py` | Empty list → `None`, singular/plural noun, block structure, ticket field rendering, inter-ticket dividers, null assignee → "Unassigned", stale days in footer |
+| `handler.py` (unit) | Happy path, no tickets skips Slack, Jira error re-raised, Slack error re-raised, JQL contains configured stale days |
+| `handler.py` (integration) | Full end-to-end wiring: Secrets Manager → Jira fetch → message build → Slack POST |
 
 ## Staleness Definition
 
