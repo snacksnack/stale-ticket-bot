@@ -29,10 +29,11 @@ def _secrets_side_effect(*_args, SecretId=None, **_kwargs):
 
 
 @patch.dict(os.environ, ENV)
+@patch("handler._cloudwatch")
 @patch("handler._secrets")
 @patch("handler.SlackClient")
 @patch("handler.JiraClient")
-def test_happy_path_posts_to_slack(mock_jira_cls, mock_slack_cls, mock_secrets):
+def test_happy_path_posts_to_slack(mock_jira_cls, mock_slack_cls, mock_secrets, mock_cw):
     mock_secrets.get_secret_value.side_effect = _secrets_side_effect
     mock_jira_cls.return_value.get_stale_tickets.return_value = [TICKET]
 
@@ -42,10 +43,11 @@ def test_happy_path_posts_to_slack(mock_jira_cls, mock_slack_cls, mock_secrets):
 
 
 @patch.dict(os.environ, ENV)
+@patch("handler._cloudwatch")
 @patch("handler._secrets")
 @patch("handler.SlackClient")
 @patch("handler.JiraClient")
-def test_no_tickets_skips_slack(mock_jira_cls, mock_slack_cls, mock_secrets):
+def test_no_tickets_skips_slack(mock_jira_cls, mock_slack_cls, mock_secrets, mock_cw):
     mock_secrets.get_secret_value.side_effect = _secrets_side_effect
     mock_jira_cls.return_value.get_stale_tickets.return_value = []
 
@@ -55,10 +57,11 @@ def test_no_tickets_skips_slack(mock_jira_cls, mock_slack_cls, mock_secrets):
 
 
 @patch.dict(os.environ, ENV)
+@patch("handler._cloudwatch")
 @patch("handler._secrets")
 @patch("handler.SlackClient")
 @patch("handler.JiraClient")
-def test_jira_error_is_reraised(mock_jira_cls, mock_slack_cls, mock_secrets):
+def test_jira_error_is_reraised(mock_jira_cls, mock_slack_cls, mock_secrets, mock_cw):
     mock_secrets.get_secret_value.side_effect = _secrets_side_effect
     mock_jira_cls.return_value.get_stale_tickets.side_effect = JiraClientError("boom")
 
@@ -67,10 +70,11 @@ def test_jira_error_is_reraised(mock_jira_cls, mock_slack_cls, mock_secrets):
 
 
 @patch.dict(os.environ, ENV)
+@patch("handler._cloudwatch")
 @patch("handler._secrets")
 @patch("handler.SlackClient")
 @patch("handler.JiraClient")
-def test_slack_error_is_reraised(mock_jira_cls, mock_slack_cls, mock_secrets):
+def test_slack_error_is_reraised(mock_jira_cls, mock_slack_cls, mock_secrets, mock_cw):
     mock_secrets.get_secret_value.side_effect = _secrets_side_effect
     mock_jira_cls.return_value.get_stale_tickets.return_value = [TICKET]
     mock_slack_cls.return_value.post_message.side_effect = SlackClientError("boom")
@@ -80,10 +84,11 @@ def test_slack_error_is_reraised(mock_jira_cls, mock_slack_cls, mock_secrets):
 
 
 @patch.dict(os.environ, ENV)
+@patch("handler._cloudwatch")
 @patch("handler._secrets")
 @patch("handler.SlackClient")
 @patch("handler.JiraClient")
-def test_jql_contains_stale_days_and_project(mock_jira_cls, mock_slack_cls, mock_secrets):
+def test_jql_contains_stale_days_and_project(mock_jira_cls, mock_slack_cls, mock_secrets, mock_cw):
     mock_secrets.get_secret_value.side_effect = _secrets_side_effect
     mock_jira_cls.return_value.get_stale_tickets.return_value = []
 
@@ -93,3 +98,45 @@ def test_jql_contains_stale_days_and_project(mock_jira_cls, mock_slack_cls, mock
     stale_days = handler._STALE_DAYS
     assert f"-{stale_days}d" in jql_used
     assert "RC1" in jql_used
+
+
+@patch.dict(os.environ, ENV)
+@patch("handler._cloudwatch")
+@patch("handler._secrets")
+@patch("handler.SlackClient")
+@patch("handler.JiraClient")
+def test_emits_ticket_count_metric(mock_jira_cls, mock_slack_cls, mock_secrets, mock_cw):
+    mock_secrets.get_secret_value.side_effect = _secrets_side_effect
+    mock_jira_cls.return_value.get_stale_tickets.return_value = [TICKET]
+
+    handler.lambda_handler({}, {})
+
+    mock_cw.put_metric_data.assert_called_once_with(
+        Namespace="StaleTicketBot",
+        MetricData=[{
+            "MetricName": "StaleTicketCount",
+            "Value": 1,
+            "Unit": "Count",
+        }],
+    )
+
+
+@patch.dict(os.environ, ENV)
+@patch("handler._cloudwatch")
+@patch("handler._secrets")
+@patch("handler.SlackClient")
+@patch("handler.JiraClient")
+def test_emits_zero_count_when_no_tickets(mock_jira_cls, mock_slack_cls, mock_secrets, mock_cw):
+    mock_secrets.get_secret_value.side_effect = _secrets_side_effect
+    mock_jira_cls.return_value.get_stale_tickets.return_value = []
+
+    handler.lambda_handler({}, {})
+
+    mock_cw.put_metric_data.assert_called_once_with(
+        Namespace="StaleTicketBot",
+        MetricData=[{
+            "MetricName": "StaleTicketCount",
+            "Value": 0,
+            "Unit": "Count",
+        }],
+    )

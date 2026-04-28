@@ -45,6 +45,7 @@ _JQL = (
     f'ORDER BY updated ASC'
 )
 _secrets = boto3.client("secretsmanager")
+_cloudwatch = boto3.client("cloudwatch")
 
 
 def lambda_handler(event, context):
@@ -64,6 +65,15 @@ def lambda_handler(event, context):
             api_token=jira_secret["api_token"],
         )
         tickets = jira.get_stale_tickets(_JQL)
+
+        _cloudwatch.put_metric_data(
+            Namespace="StaleTicketBot",
+            MetricData=[{
+                "MetricName": "StaleTicketCount",
+                "Value": len(tickets),
+                "Unit": "Count",
+            }],
+        )
 
         if not tickets:
             logger.info("no stale tickets found, skipping Slack post")

@@ -166,10 +166,23 @@ ORDER BY updated ASC
 
 ## Lambda Handler
 
-- `boto3.client("secretsmanager")` is initialised at module level so it is reused across warm Lambda invocations rather than re-created on every call
+- `boto3.client("secretsmanager")` and `boto3.client("cloudwatch")` are initialised at module level so they are reused across warm Lambda invocations rather than re-created on every call
 - `JIRA_BASE_URL` is read via `os.environ["JIRA_BASE_URL"]` (not `.get()`) so the function fails loudly at startup if the variable is missing, rather than producing a confusing error later
 - `JIRA_BASE_URL` is a CloudFormation parameter (not a secret) — supply your Jira instance URL (e.g. `https://your-org.atlassian.net`) at deploy time
+- After every successful Jira fetch the handler emits a `StaleTicketCount` custom metric — including when the count is 0 — so gaps in the metric are meaningful rather than ambiguous
 - If no stale tickets are found the handler logs and returns early without posting to Slack
+
+## Custom Metrics
+
+The handler emits one custom CloudWatch metric per invocation:
+
+| Namespace | Metric | Unit | Notes |
+|-----------|--------|------|-------|
+| `StaleTicketBot` | `StaleTicketCount` | Count | Number of stale tickets found; emitted even when 0 so the metric is always present |
+
+The metric is only emitted after a successful Jira API call. If the call fails (and the event lands in the DLQ), no metric is emitted for that invocation, which itself acts as a signal.
+
+You can graph `StaleTicketCount` over time in CloudWatch and set an alarm if it rises above a threshold that would indicate an unusual backlog.
 
 ## Block Kit Message Structure
 
@@ -179,11 +192,36 @@ ORDER BY updated ASC
 - Unassigned tickets show `Unassigned` rather than a blank field
 - Each ticket's summary appears on its own line for readability
 
+## Jira Client Retry Behaviour
+
+Transient Jira API errors (HTTP 429, 500, 502, 503, 504) are retried automatically using `tenacity`. Permanent errors (401, 403, 410, etc.) are not retried.
+
+| Setting | Value |
+|---------|-------|
+| Total attempts | 4 (1 original + 3 retries) |
+| Backoff | Exponential — 1s, 2s, 4s (capped at 8s) |
+| Retry on | `JiraTransientError` (subclass of `JiraClientError`) |
+| After exhaustion | Re-raises `JiraTransientError`; handler logs and re-raises, landing the event in the DLQ |
+
+`JiraTransientError` is a subclass of `JiraClientError` so callers that catch `JiraClientError` continue to work without changes.
+
 ## Slack Webhook Behaviour
 
 - The response body is checked in addition to the HTTP status — Slack can return `200` with an error string (e.g. `invalid_payload`) if the JSON is malformed, so a `200` alone is not sufficient to confirm success
 - The HTTP status and response body are always logged before any exception is raised, so failures are observable in CloudWatch even when the exception is caught upstream
 - `post_message` returns `None`; callers only need to handle the happy path or catch `SlackClientError`
+
+## Alarms
+
+All three alarms send email via the `DLQAlarmTopic` SNS topic (address set by the `AlertEmail` CloudFormation parameter).
+
+| Alarm | Metric | Condition | Notes |
+|-------|--------|-----------|-------|
+| `stale-ticket-bot-dlq-depth` | SQS `ApproximateNumberOfMessagesVisible` | > 0 | Lambda failed and a message landed in the DLQ |
+| `stale-ticket-bot-lambda-errors` | Lambda `Errors` | > 0 over 5 min | Lambda threw an unhandled error; `TreatMissingData: notBreaching` so quiet periods don't false-alarm |
+| `stale-ticket-bot-missing-invocation` | Lambda `Invocations` | < 1 over 24 hours | EventBridge schedule may have stopped; `TreatMissingData: breaching` so a missing data point is treated as a failure |
+
+**Weekend false positives:** The missing-invocation alarm will fire on weekends because the Lambda correctly does not run then — Lambda emits no data point when it isn't invoked, so CloudWatch cannot distinguish "didn't run on a weekday" from "it's Saturday." This is a known CloudWatch limitation with no native workaround for schedules that don't run every day.
 
 ## Architecture
 
@@ -194,7 +232,8 @@ EventBridge (cron, 9 AM ET weekdays)
             ├── Jira REST API  →  fetch stale tickets
             ├── Slack Webhook  →  post Block Kit message
             └── SQS DLQ        →  on failure
-                    └── CloudWatch Alarm → SNS → email
+                    └── CloudWatch Alarms (DLQ depth, Lambda errors, missing invocation)
+                            └── SNS → email
 ```
 
 **Source layout:**

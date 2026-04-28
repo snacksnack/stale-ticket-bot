@@ -5,7 +5,7 @@ from unittest.mock import patch
 import pytest
 import responses
 
-from jira_client import JiraClient, JiraClientError
+from jira_client import JiraClient, JiraClientError, JiraTransientError
 
 BASE_URL = "https://jira.example.com"
 SEARCH_URL = f"{BASE_URL}/rest/api/3/search/jql"
@@ -72,11 +72,40 @@ def test_empty_issues_returns_empty_list():
 
 
 @responses.activate
-def test_non_200_raises_jira_client_error():
+def test_permanent_error_raises_jira_client_error_immediately():
     responses.add(responses.GET, SEARCH_URL, body="Unauthorized", status=401)
 
     with pytest.raises(JiraClientError, match="401"):
         JiraClient(BASE_URL, EMAIL, TOKEN).get_stale_tickets("project = RC1")
+
+    assert len(responses.calls) == 1
+
+
+@responses.activate
+@patch("time.sleep")
+def test_transient_error_retries_then_raises(mock_sleep):
+    for _ in range(4):  # stop_after_attempt(4)
+        responses.add(responses.GET, SEARCH_URL, body="Service Unavailable", status=503)
+
+    with pytest.raises(JiraTransientError, match="503"):
+        JiraClient(BASE_URL, EMAIL, TOKEN).get_stale_tickets("project = RC1")
+
+    assert len(responses.calls) == 4
+
+
+@responses.activate
+@patch("time.sleep")
+@patch("jira_client.datetime")
+def test_transient_error_retries_then_succeeds(mock_dt, mock_sleep):
+    mock_dt.now.return_value.date.return_value = FIXED_TODAY
+    mock_dt.fromisoformat = datetime.fromisoformat
+    responses.add(responses.GET, SEARCH_URL, body="Service Unavailable", status=503)
+    responses.add(responses.GET, SEARCH_URL, json={"issues": [ISSUE]}, status=200)
+
+    tickets = JiraClient(BASE_URL, EMAIL, TOKEN).get_stale_tickets("project = RC1")
+
+    assert len(tickets) == 1
+    assert len(responses.calls) == 2
 
 
 @responses.activate

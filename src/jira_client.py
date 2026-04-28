@@ -1,11 +1,18 @@
 import logging
 import requests
 from datetime import datetime, timezone
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 logger = logging.getLogger(__name__)
 
+_TRANSIENT_STATUS_CODES = frozenset([429, 500, 502, 503, 504])
+
 
 class JiraClientError(Exception):
+    pass
+
+
+class JiraTransientError(JiraClientError):
     pass
 
 
@@ -16,6 +23,12 @@ class JiraClient:
         self._session.auth = (email, api_token)
         self._session.headers["Accept"] = "application/json"
 
+    @retry(
+        stop=stop_after_attempt(4),
+        wait=wait_exponential(multiplier=1, min=1, max=8),
+        retry=retry_if_exception_type(JiraTransientError),
+        reraise=True,
+    )
     def get_stale_tickets(self, jql: str, max_results: int = 50) -> list[dict]:
         url = f"{self.base_url}/rest/api/3/search/jql"
         logger.info("fetching stale tickets", extra={"jql_used": jql})
@@ -24,6 +37,10 @@ class JiraClient:
             "maxResults": max_results,
             "fields": "summary,status,assignee,updated",
         })
+        if response.status_code in _TRANSIENT_STATUS_CODES:
+            raise JiraTransientError(
+                f"Jira API returned {response.status_code}: {response.text}"
+            )
         if response.status_code != 200:
             raise JiraClientError(
                 f"Jira API returned {response.status_code}: {response.text}"
