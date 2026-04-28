@@ -9,7 +9,7 @@ from moto import mock_aws
 import handler
 
 JIRA_BASE_URL = "https://jira.example.com"
-JIRA_SEARCH_URL = f"{JIRA_BASE_URL}/rest/api/3/search"
+JIRA_SEARCH_URL = f"{JIRA_BASE_URL}/rest/api/3/search/jql"
 SLACK_WEBHOOK_URL = "https://hooks.slack.com/services/T00/B00/test"
 JIRA_SECRET = {"email": "user@example.com", "api_token": "tok"}
 

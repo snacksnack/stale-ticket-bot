@@ -17,7 +17,7 @@ class JiraClient:
         self._session.headers["Accept"] = "application/json"
 
     def get_stale_tickets(self, jql: str, max_results: int = 50) -> list[dict]:
-        url = f"{self.base_url}/rest/api/3/search"
+        url = f"{self.base_url}/rest/api/3/search/jql"
         logger.info("fetching stale tickets", extra={"jql_used": jql})
         response = self._session.get(url, params={
             "jql": jql,

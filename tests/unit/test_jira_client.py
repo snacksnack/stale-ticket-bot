@@ -8,7 +8,7 @@ import responses
 from jira_client import JiraClient, JiraClientError
 
 BASE_URL = "https://jira.example.com"
-SEARCH_URL = f"{BASE_URL}/rest/api/3/search"
+SEARCH_URL = f"{BASE_URL}/rest/api/3/search/jql"
 EMAIL = "user@example.com"
 TOKEN = "api-token-123"
 FIXED_TODAY = date(2026, 4, 28)
