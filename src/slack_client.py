@@ -17,7 +17,10 @@ class SlackClient:
         body = response.text
         logger.info(
             "slack webhook response",
-            extra={"slack_status": response.status_code, "slack_response": body},
+            extra={
+                "slack_status": response.status_code,
+                "slack_response": body,
+            },
         )
         if response.status_code != 200 or body != "ok":
             raise SlackClientError(
