@@ -63,4 +63,5 @@ jobs:
           --parameter-overrides
           AlertEmail=${{ secrets.ALERT_EMAIL }}
           JiraBaseUrl=${{ secrets.JIRA_BASE_URL }}
+          JiraProjectKey=${{ secrets.JIRA_PROJECT_KEY }}
           StaleDays=${{ secrets.STALE_DAYS }}

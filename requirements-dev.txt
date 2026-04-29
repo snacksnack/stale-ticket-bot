@@ -4,3 +4,5 @@ flake8
 moto[secretsmanager]
 responses
 boto3
+requests
+tenacity
