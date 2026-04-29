@@ -28,12 +28,19 @@ def _secrets_side_effect(*_args, SecretId=None, **_kwargs):
     return {"SecretString": SLACK_URL}
 
 
+def _setup_jira_mock(mock_jira_cls):
+    # handler.py uses `with JiraClient(...) as jira:`, so __enter__ must return
+    # the same mock instance that get_stale_tickets is configured on.
+    mock_jira_cls.return_value.__enter__.return_value = mock_jira_cls.return_value
+
+
 @patch.dict(os.environ, ENV)
 @patch("handler._cloudwatch")
 @patch("handler._secrets")
 @patch("handler.SlackClient")
 @patch("handler.JiraClient")
 def test_happy_path_posts_to_slack(mock_jira_cls, mock_slack_cls, mock_secrets, mock_cw):
+    _setup_jira_mock(mock_jira_cls)
     mock_secrets.get_secret_value.side_effect = _secrets_side_effect
     mock_jira_cls.return_value.get_stale_tickets.return_value = [TICKET]
 
@@ -48,6 +55,7 @@ def test_happy_path_posts_to_slack(mock_jira_cls, mock_slack_cls, mock_secrets, 
 @patch("handler.SlackClient")
 @patch("handler.JiraClient")
 def test_no_tickets_skips_slack(mock_jira_cls, mock_slack_cls, mock_secrets, mock_cw):
+    _setup_jira_mock(mock_jira_cls)
     mock_secrets.get_secret_value.side_effect = _secrets_side_effect
     mock_jira_cls.return_value.get_stale_tickets.return_value = []
 
@@ -62,6 +70,7 @@ def test_no_tickets_skips_slack(mock_jira_cls, mock_slack_cls, mock_secrets, moc
 @patch("handler.SlackClient")
 @patch("handler.JiraClient")
 def test_jira_error_is_reraised(mock_jira_cls, mock_slack_cls, mock_secrets, mock_cw):
+    _setup_jira_mock(mock_jira_cls)
     mock_secrets.get_secret_value.side_effect = _secrets_side_effect
     mock_jira_cls.return_value.get_stale_tickets.side_effect = JiraClientError("boom")
 
@@ -75,6 +84,7 @@ def test_jira_error_is_reraised(mock_jira_cls, mock_slack_cls, mock_secrets, moc
 @patch("handler.SlackClient")
 @patch("handler.JiraClient")
 def test_slack_error_is_reraised(mock_jira_cls, mock_slack_cls, mock_secrets, mock_cw):
+    _setup_jira_mock(mock_jira_cls)
     mock_secrets.get_secret_value.side_effect = _secrets_side_effect
     mock_jira_cls.return_value.get_stale_tickets.return_value = [TICKET]
     mock_slack_cls.return_value.post_message.side_effect = SlackClientError("boom")
@@ -89,6 +99,7 @@ def test_slack_error_is_reraised(mock_jira_cls, mock_slack_cls, mock_secrets, mo
 @patch("handler.SlackClient")
 @patch("handler.JiraClient")
 def test_jql_contains_stale_days_and_project(mock_jira_cls, mock_slack_cls, mock_secrets, mock_cw):
+    _setup_jira_mock(mock_jira_cls)
     mock_secrets.get_secret_value.side_effect = _secrets_side_effect
     mock_jira_cls.return_value.get_stale_tickets.return_value = []
 
@@ -106,6 +117,7 @@ def test_jql_contains_stale_days_and_project(mock_jira_cls, mock_slack_cls, mock
 @patch("handler.SlackClient")
 @patch("handler.JiraClient")
 def test_emits_ticket_count_metric(mock_jira_cls, mock_slack_cls, mock_secrets, mock_cw):
+    _setup_jira_mock(mock_jira_cls)
     mock_secrets.get_secret_value.side_effect = _secrets_side_effect
     mock_jira_cls.return_value.get_stale_tickets.return_value = [TICKET]
 
@@ -127,6 +139,7 @@ def test_emits_ticket_count_metric(mock_jira_cls, mock_slack_cls, mock_secrets, 
 @patch("handler.SlackClient")
 @patch("handler.JiraClient")
 def test_emits_zero_count_when_no_tickets(mock_jira_cls, mock_slack_cls, mock_secrets, mock_cw):
+    _setup_jira_mock(mock_jira_cls)
     mock_secrets.get_secret_value.side_effect = _secrets_side_effect
     mock_jira_cls.return_value.get_stale_tickets.return_value = []
 
@@ -147,7 +160,21 @@ def test_emits_zero_count_when_no_tickets(mock_jira_cls, mock_slack_cls, mock_se
 @patch("handler._secrets")
 @patch("handler.SlackClient")
 @patch("handler.JiraClient")
+def test_unexpected_error_is_reraised(mock_jira_cls, mock_slack_cls, mock_secrets, mock_cw):
+    _setup_jira_mock(mock_jira_cls)
+    mock_secrets.get_secret_value.side_effect = RuntimeError("something weird")
+
+    with pytest.raises(RuntimeError):
+        handler.lambda_handler({}, {})
+
+
+@patch.dict(os.environ, ENV)
+@patch("handler._cloudwatch")
+@patch("handler._secrets")
+@patch("handler.SlackClient")
+@patch("handler.JiraClient")
 def test_metric_failure_does_not_fail_lambda(mock_jira_cls, mock_slack_cls, mock_secrets, mock_cw):
+    _setup_jira_mock(mock_jira_cls)
     mock_secrets.get_secret_value.side_effect = _secrets_side_effect
     mock_jira_cls.return_value.get_stale_tickets.return_value = [TICKET]
     mock_cw.put_metric_data.side_effect = Exception("throttled")

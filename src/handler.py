@@ -4,9 +4,9 @@ import os
 
 import boto3
 
-from jira_client import JiraClient
+from jira_client import JiraClient, JiraClientError
 from message_builder import build_stale_ticket_message
-from slack_client import SlackClient
+from slack_client import SlackClient, SlackClientError
 
 _LOG_RECORD_BUILTINS = frozenset(logging.LogRecord("", 0, "", 0, "", (), None).__dict__)
 
@@ -51,12 +51,12 @@ def lambda_handler(event, context):
         jira_secret = json.loads(jira_raw)
         slack_url = _secrets.get_secret_value(SecretId="stale-bot/slack-webhook-url")["SecretString"]
 
-        jira = JiraClient(
+        with JiraClient(
             base_url=os.environ["JIRA_BASE_URL"],
             email=jira_secret["email"],
             api_token=jira_secret["api_token"],
-        )
-        tickets = jira.get_stale_tickets(_JQL)
+        ) as jira:
+            tickets = jira.get_stale_tickets(_JQL)
 
         try:
             _cloudwatch.put_metric_data(
@@ -78,12 +78,12 @@ def lambda_handler(event, context):
         SlackClient(slack_url).post_message(payload)
 
         logger.info("stale-ticket-bot completed", extra={"ticket_count": len(tickets)})
+    except JiraClientError as exc:
+        logger.error("jira fetch failed", extra={"error": str(exc), "error_type": type(exc).__name__})
+        raise
+    except SlackClientError as exc:
+        logger.error("slack post failed", extra={"error": str(exc), "error_type": type(exc).__name__})
+        raise
     except Exception as exc:
-        logger.error(
-            "stale-ticket-bot failed",
-            extra={
-                "error": str(exc),
-                "error_type": type(exc).__name__,
-            },
-        )
+        logger.error("unexpected error", extra={"error": str(exc), "error_type": type(exc).__name__})
         raise

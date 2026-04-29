@@ -2,8 +2,9 @@ import json
 
 import pytest
 import responses
+from unittest.mock import patch
 
-from slack_client import SlackClient, SlackClientError
+from slack_client import SlackClient, SlackClientError, SlackTransientError
 
 WEBHOOK_URL = "https://hooks.slack.com/services/T00/B00/test"
 PAYLOAD = {"blocks": [{"type": "header", "text": {"type": "plain_text", "text": "Test"}}]}
@@ -19,11 +20,36 @@ def test_happy_path_posts_successfully():
 
 
 @responses.activate
-def test_non_200_raises_slack_client_error():
-    responses.add(responses.POST, WEBHOOK_URL, body="internal_error", status=500)
+@patch("time.sleep")
+def test_transient_error_retries_then_raises(mock_sleep):
+    for _ in range(4):
+        responses.add(responses.POST, WEBHOOK_URL, body="Service Unavailable", status=503)
 
-    with pytest.raises(SlackClientError, match="500"):
+    with pytest.raises(SlackTransientError, match="503"):
         SlackClient(WEBHOOK_URL).post_message(PAYLOAD)
+
+    assert len(responses.calls) == 4
+
+
+@responses.activate
+@patch("time.sleep")
+def test_transient_error_retries_then_succeeds(mock_sleep):
+    responses.add(responses.POST, WEBHOOK_URL, body="Service Unavailable", status=503)
+    responses.add(responses.POST, WEBHOOK_URL, body="ok", status=200)
+
+    SlackClient(WEBHOOK_URL).post_message(PAYLOAD)
+
+    assert len(responses.calls) == 2
+
+
+@responses.activate
+def test_permanent_error_raises_immediately():
+    responses.add(responses.POST, WEBHOOK_URL, body="invalid_token", status=403)
+
+    with pytest.raises(SlackClientError, match="403"):
+        SlackClient(WEBHOOK_URL).post_message(PAYLOAD)
+
+    assert len(responses.calls) == 1
 
 
 @responses.activate

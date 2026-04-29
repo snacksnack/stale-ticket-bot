@@ -1,6 +1,6 @@
 from unittest.mock import patch
 
-from message_builder import build_stale_ticket_message
+from message_builder import build_stale_ticket_message, _MAX_DISPLAYED
 
 TICKET = {
     "key": "RC1-42",
@@ -96,6 +96,29 @@ def test_null_assignee_shows_unassigned(mock_dt):
     section_text = result["blocks"][2]["text"]["text"]
 
     assert "Unassigned" in section_text
+
+
+@patch("message_builder.datetime")
+def test_truncates_at_max_displayed_and_shows_overflow_count(mock_dt):
+    _fixed_dt(mock_dt)
+    tickets = [dict(TICKET, key=f"RC1-{i}") for i in range(_MAX_DISPLAYED + 5)]
+    result = build_stale_ticket_message(tickets, 7)
+    blocks = result["blocks"]
+
+    sections = [b for b in blocks if b["type"] == "section"]
+    assert len(sections) == _MAX_DISPLAYED
+
+    overflow_block = blocks[-2]  # second-to-last, before footer
+    assert overflow_block["type"] == "context"
+    assert "5 more tickets" in overflow_block["elements"][0]["text"]
+
+
+@patch("message_builder.datetime")
+def test_block_count_never_exceeds_slack_limit(mock_dt):
+    _fixed_dt(mock_dt)
+    tickets = [dict(TICKET, key=f"RC1-{i}") for i in range(_MAX_DISPLAYED + 10)]
+    result = build_stale_ticket_message(tickets, 7)
+    assert len(result["blocks"]) <= 50
 
 
 @patch("message_builder.datetime")

@@ -16,7 +16,7 @@ lint = true
 capabilities = "CAPABILITY_IAM"
 confirm_changeset = true
 resolve_s3 = true
-parameter_overrides = "StaleDays=7 JiraBaseUrl=https://hirereidcollins.atlassian.net JiraProjectKey=RC1 AlertEmail=hi.hello.reid@gmail.com"
+parameter_overrides = "StaleDays=7 JiraBaseUrl=https://hirereidcollins.atlassian.net JiraProjectKey=RC1"
 
 [default.package.parameters]
 resolve_s3 = true

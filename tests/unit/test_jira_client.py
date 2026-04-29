@@ -131,20 +131,21 @@ def test_jql_with_different_stale_days_encoded_in_url():
 
 @responses.activate
 @patch("jira_client.datetime")
-def test_warns_when_total_exceeds_max_results(mock_dt, caplog):
+def test_paginates_when_total_exceeds_page_size(mock_dt):
     mock_dt.now.return_value.date.return_value = FIXED_TODAY
     mock_dt.fromisoformat = datetime.fromisoformat
-    responses.add(
-        responses.GET, SEARCH_URL,
-        json={"total": 99, "issues": [ISSUE]},
-        status=200,
-    )
+    issue_2 = {**ISSUE, "key": "RC1-43"}
+    responses.add(responses.GET, SEARCH_URL, json={"total": 2, "issues": [ISSUE]}, status=200)
+    responses.add(responses.GET, SEARCH_URL, json={"total": 2, "issues": [issue_2]}, status=200)
 
-    import logging
-    with caplog.at_level(logging.WARNING, logger="jira_client"):
-        JiraClient(BASE_URL, EMAIL, TOKEN).get_stale_tickets("project = RC1", max_results=50)
+    tickets = JiraClient(BASE_URL, EMAIL, TOKEN).get_stale_tickets("project = RC1", max_results=1)
 
-    assert any("truncated" in r.message for r in caplog.records)
+    assert len(tickets) == 2
+    assert tickets[0]["key"] == "RC1-42"
+    assert tickets[1]["key"] == "RC1-43"
+    assert len(responses.calls) == 2
+    assert "startAt=0" in responses.calls[0].request.url
+    assert "startAt=1" in responses.calls[1].request.url
 
 
 @responses.activate

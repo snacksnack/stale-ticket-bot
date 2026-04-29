@@ -23,17 +23,17 @@ class JiraClient:
         self._session.auth = (email, api_token)
         self._session.headers["Accept"] = "application/json"
 
-    @retry(
-        stop=stop_after_attempt(4),
-        wait=wait_exponential(multiplier=1, min=1, max=8),
-        retry=retry_if_exception_type(JiraTransientError),
-        reraise=True,
-    )
-    def get_stale_tickets(self, jql: str, max_results: int = 50) -> list[dict]:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        self._session.close()
+
+    def _fetch_page(self, jql: str, start_at: int, max_results: int) -> dict:
         url = f"{self.base_url}/rest/api/3/search/jql"
-        logger.info("fetching stale tickets", extra={"jql_used": jql})
         response = self._session.get(url, params={
             "jql": jql,
+            "startAt": start_at,
             "maxResults": max_results,
             "fields": "summary,status,assignee,updated",
         }, timeout=10)
@@ -42,28 +42,43 @@ class JiraClient:
         if response.status_code != 200:
             raise JiraClientError(f"Jira API returned {response.status_code}: {response.text}")
         try:
-            data = response.json()
+            return response.json()
         except requests.exceptions.JSONDecodeError as exc:
             raise JiraClientError(f"Jira API returned non-JSON response: {response.text[:200]}") from exc
-        total = data.get("total", 0)
-        if total > max_results:
-            logger.warning(
-                "jira result truncated — increase max_results or add pagination",
-                extra={"total": total, "max_results": max_results},
-            )
+
+    @retry(
+        stop=stop_after_attempt(4),
+        wait=wait_exponential(multiplier=1, min=1, max=8),
+        retry=retry_if_exception_type(JiraTransientError),
+        reraise=True,
+    )
+    def get_stale_tickets(self, jql: str, max_results: int = 50) -> list[dict]:
+        logger.info("fetching stale tickets", extra={"jql_used": jql})
         today = datetime.now(timezone.utc).date()
         tickets = []
-        for issue in data.get("issues", []):
-            fields = issue["fields"]
-            updated = datetime.fromisoformat(fields["updated"].replace("Z", "+00:00")).date()
-            assignee = fields.get("assignee")
-            tickets.append({
-                "key": issue["key"],
-                "summary": fields["summary"],
-                "status": fields["status"]["name"],
-                "assignee": assignee["displayName"] if assignee else None,
-                "url": f"{self.base_url}/browse/{issue['key']}",
-                "days_stale": (today - updated).days,
-            })
+        start_at = 0
+
+        while True:
+            data = self._fetch_page(jql, start_at, max_results)
+            issues = data.get("issues", [])
+            total = data.get("total", 0)
+
+            for issue in issues:
+                fields = issue["fields"]
+                updated = datetime.fromisoformat(fields["updated"].replace("Z", "+00:00")).date()
+                assignee = fields.get("assignee")
+                tickets.append({
+                    "key": issue["key"],
+                    "summary": fields["summary"],
+                    "status": fields["status"]["name"],
+                    "assignee": assignee["displayName"] if assignee else None,
+                    "url": f"{self.base_url}/browse/{issue['key']}",
+                    "days_stale": (today - updated).days,
+                })
+
+            start_at += len(issues)
+            if start_at >= total or not issues:
+                break
+
         logger.info("stale tickets fetched", extra={"ticket_count": len(tickets)})
         return tickets
