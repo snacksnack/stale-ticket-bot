@@ -1,9 +1,7 @@
 from datetime import datetime, timezone
 
 
-def build_stale_ticket_message(
-    tickets: list, stale_days: int
-) -> dict | None:
+def build_stale_ticket_message(tickets: list, stale_days: int) -> dict | None:
     if not tickets:
         return None
 
@@ -52,10 +50,7 @@ def build_stale_ticket_message(
         "elements": [
             {
                 "type": "mrkdwn",
-                "text": (
-                    f"Tickets inactive for >{stale_days} days"
-                    f"  |  {timestamp}"
-                ),
+                "text": f"Tickets inactive for >{stale_days} days  |  {timestamp}",
             }
         ],
     })

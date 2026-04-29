@@ -8,9 +8,7 @@ from jira_client import JiraClient
 from message_builder import build_stale_ticket_message
 from slack_client import SlackClient
 
-_LOG_RECORD_BUILTINS = frozenset(
-    logging.LogRecord("", 0, "", 0, "", (), None).__dict__
-)
+_LOG_RECORD_BUILTINS = frozenset(logging.LogRecord("", 0, "", 0, "", (), None).__dict__)
 
 
 class _JsonFormatter(logging.Formatter):
@@ -20,10 +18,7 @@ class _JsonFormatter(logging.Formatter):
             "message": record.getMessage(),
             "timestamp": self.formatTime(record, "%Y-%m-%dT%H:%M:%SZ"),
         }
-        extras = {
-            k: v for k, v in record.__dict__.items()
-            if k not in _LOG_RECORD_BUILTINS
-        }
+        extras = {k: v for k, v in record.__dict__.items() if k not in _LOG_RECORD_BUILTINS}
         entry.update(extras)
         return json.dumps(entry, default=str)
 
@@ -52,13 +47,9 @@ _cloudwatch = boto3.client("cloudwatch")
 def lambda_handler(event, context):
     logger.info("stale-ticket-bot started", extra={"jql_used": _JQL})
     try:
-        jira_raw = _secrets.get_secret_value(
-            SecretId="stale-bot/jira-api-token"
-        )["SecretString"]
+        jira_raw = _secrets.get_secret_value(SecretId="stale-bot/jira-api-token")["SecretString"]
         jira_secret = json.loads(jira_raw)
-        slack_url = _secrets.get_secret_value(
-            SecretId="stale-bot/slack-webhook-url"
-        )["SecretString"]
+        slack_url = _secrets.get_secret_value(SecretId="stale-bot/slack-webhook-url")["SecretString"]
 
         jira = JiraClient(
             base_url=os.environ["JIRA_BASE_URL"],
@@ -86,10 +77,7 @@ def lambda_handler(event, context):
         payload = build_stale_ticket_message(tickets, _STALE_DAYS)
         SlackClient(slack_url).post_message(payload)
 
-        logger.info(
-            "stale-ticket-bot completed",
-            extra={"ticket_count": len(tickets)},
-        )
+        logger.info("stale-ticket-bot completed", extra={"ticket_count": len(tickets)})
     except Exception as exc:
         logger.error(
             "stale-ticket-bot failed",

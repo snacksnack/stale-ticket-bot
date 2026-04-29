@@ -38,19 +38,13 @@ class JiraClient:
             "fields": "summary,status,assignee,updated",
         }, timeout=10)
         if response.status_code in _TRANSIENT_STATUS_CODES:
-            raise JiraTransientError(
-                f"Jira API returned {response.status_code}: {response.text}"
-            )
+            raise JiraTransientError(f"Jira API returned {response.status_code}: {response.text}")
         if response.status_code != 200:
-            raise JiraClientError(
-                f"Jira API returned {response.status_code}: {response.text}"
-            )
+            raise JiraClientError(f"Jira API returned {response.status_code}: {response.text}")
         try:
             data = response.json()
         except requests.exceptions.JSONDecodeError as exc:
-            raise JiraClientError(
-                f"Jira API returned non-JSON response: {response.text[:200]}"
-            ) from exc
+            raise JiraClientError(f"Jira API returned non-JSON response: {response.text[:200]}") from exc
         total = data.get("total", 0)
         if total > max_results:
             logger.warning(
@@ -61,9 +55,7 @@ class JiraClient:
         tickets = []
         for issue in data.get("issues", []):
             fields = issue["fields"]
-            updated = datetime.fromisoformat(
-                fields["updated"].replace("Z", "+00:00")
-            ).date()
+            updated = datetime.fromisoformat(fields["updated"].replace("Z", "+00:00")).date()
             assignee = fields.get("assignee")
             tickets.append({
                 "key": issue["key"],
@@ -73,8 +65,5 @@ class JiraClient:
                 "url": f"{self.base_url}/browse/{issue['key']}",
                 "days_stale": (today - updated).days,
             })
-        logger.info(
-            "stale tickets fetched",
-            extra={"ticket_count": len(tickets)},
-        )
+        logger.info("stale tickets fetched", extra={"ticket_count": len(tickets)})
         return tickets
