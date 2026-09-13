@@ -10,7 +10,7 @@ import handler
 
 JIRA_BASE_URL = "https://jira.example.com"
 JIRA_SEARCH_URL = f"{JIRA_BASE_URL}/rest/api/3/search/jql"
-SLACK_WEBHOOK_URL = "https://hooks.slack.com/services/T00/B00/test"
+SLACK_API_URL = "https://slack.com/api/chat.postMessage"
 JIRA_SECRET = {"email": "user@example.com", "api_token": "tok"}
 
 JIRA_RESPONSE = {
@@ -37,7 +37,14 @@ _AWS_ENV = {
 
 
 @mock_aws
-@patch.dict(os.environ, {"JIRA_BASE_URL": JIRA_BASE_URL, "JIRA_PROJECT_KEY": "RC1", "STALE_DAYS": "7", **_AWS_ENV})
+@patch.dict(os.environ, {
+    "JIRA_BASE_URL": JIRA_BASE_URL,
+    "JIRA_PROJECT_KEY": "RC1",
+    "STALE_DAYS": "7",
+    "SLACK_BOT_TOKEN_SECRET_NAME": "incident-summarizer-slackbot",
+    "SLACK_CHANNEL_ID": "C0TEST",
+    **_AWS_ENV,
+})
 def test_handler_end_to_end_posts_to_slack():
     # Seed Secrets Manager with test credentials.
     sm = boto3.client("secretsmanager", region_name="us-east-1")
@@ -46,15 +53,15 @@ def test_handler_end_to_end_posts_to_slack():
         SecretString=json.dumps(JIRA_SECRET),
     )
     sm.create_secret(
-        Name="stale-bot/slack-webhook-url",
-        SecretString=SLACK_WEBHOOK_URL,
+        Name="incident-summarizer-slackbot",
+        SecretString="xoxb-test",
     )
 
     # Mock the Jira and Slack HTTP calls via a local RequestsMock so that
     # rsps.calls is isolated from any global state that @mock_aws may touch.
     with responses.RequestsMock(assert_all_requests_are_fired=True) as rsps:
         rsps.add(rsps.GET, JIRA_SEARCH_URL, json=JIRA_RESPONSE, status=200)
-        rsps.add(rsps.POST, SLACK_WEBHOOK_URL, body="ok", status=200)
+        rsps.add(rsps.POST, SLACK_API_URL, json={"ok": True, "ts": "1.0"}, status=200)
 
         # Replace the module-level boto3 client with one created inside the mock
         # context so Secrets Manager lookups resolve against the seeded secrets.
@@ -62,11 +69,13 @@ def test_handler_end_to_end_posts_to_slack():
             handler.lambda_handler({}, {})
 
         # Verify the Slack POST was made and contains the expected ticket data.
-        slack_calls = [c for c in rsps.calls if SLACK_WEBHOOK_URL in c.request.url]
+        slack_calls = [c for c in rsps.calls if SLACK_API_URL in c.request.url]
         assert len(slack_calls) == 1
+        assert slack_calls[0].request.headers["Authorization"] == "Bearer xoxb-test"
 
         payload = json.loads(slack_calls[0].request.body)
 
+    assert payload["channel"] == "C0TEST"
     assert "blocks" in payload
 
     header_text = payload["blocks"][0]["text"]["text"]

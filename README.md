@@ -7,7 +7,7 @@ AWS Lambda function that runs on a weekday morning schedule (9 AM ET), queries J
 - [AWS SAM CLI](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/serverless-sam-cli-install.html)
 - Python 3.12
 - AWS credentials configured (`~/.aws/credentials` or environment variables)
-- Two secrets in AWS Secrets Manager (see below)
+- Two secrets in AWS Secrets Manager (see below); the Slack one is shared with the incident summarizer stack
 
 ## Secrets Manager Setup
 
@@ -36,23 +36,21 @@ Generate a Jira API token at: https://id.atlassian.com/manage-profile/security/a
 
 ---
 
-### `stale-bot/slack-webhook-url`
+### `incident-summarizer-slackbot`
 
-Stores the Slack Incoming Webhook URL as a plain string.
+The Slack bot token (a raw `xoxb-` string, no JSON) of the Incident Summarizer
+Slack app, owned by the ai-incident-summarizer stack. This stack only reads it;
+the name comes in through the `SlackBotTokenSecretName` parameter and the
+channel through `SlackChannelId` (default `#stale-bot`). The bot must be a
+member of the channel: `/invite @Incident Summarizer` once.
 
-**Structure:**
-```
-https://hooks.slack.com/services/T00000000/B00000000/XXXXXXXXXXXXXXXXXXXXXXXX
-```
-
-**Create via AWS CLI:**
-```bash
-aws secretsmanager create-secret \
-  --name stale-bot/slack-webhook-url \
-  --secret-string 'https://hooks.slack.com/services/T00000000/B00000000/XXXXXXXXXXXXXXXXXXXXXXXX'
-```
-
-Create a Slack Incoming Webhook at: https://api.slack.com/messaging/webhooks
+Until 2026-09 the bot posted through its own incoming webhook. Slack revoked
+that webhook in July 2026 and every weekday run then failed with 404
+`no_service` for two months; the stack's own email alerting was unconfirmed,
+so the only thing that noticed was the incident summarizer (RC1-436). Posting
+with the token the summarizer already uses daily means one Slack app and one
+credential for the estate, and the API answers with an error name
+(`not_in_channel`, `invalid_auth`) instead of a bare 404.
 
 ---
 
@@ -115,7 +113,7 @@ python -m pytest tests/unit -v
 python -m pytest tests/unit tests/integration -v --cov=src --cov-report=term-missing
 ```
 
-**HTTP client:** `jira_client.py` uses `requests.Session` (Basic auth via `session.auth`, JSON via `response.json()`). `slack_client.py` uses `requests.post(..., json=payload)`. Both use `requests` consistently so the `responses` library can intercept their calls in tests.
+**HTTP client:** `jira_client.py` uses `requests.Session` (Basic auth via `session.auth`, JSON via `response.json()`). `slack_client.py` uses `requests.post(..., json=payload)` against `chat.postMessage` with a bearer token. Both use `requests` consistently so the `responses` library can intercept their calls in tests.
 
 **Unit test mocking:**
 
@@ -141,7 +139,7 @@ A local `responses.RequestsMock()` context manager is used rather than the `@res
 | Module | Scenarios |
 |--------|-----------|
 | `jira_client.py` | Happy path, null assignee, empty issue list, non-200 response, JQL encoding for different stale-day values, Basic auth header |
-| `slack_client.py` | Happy path, non-200 response, 200 with non-`ok` body, JSON body + Content-Type header |
+| `slack_client.py` | Happy path returns `ts`, transient HTTP and `ratelimited` retries, permanent HTTP error, `ok: false` error code surfaced by name, non-JSON body, channel + bearer token + payload on the wire |
 | `message_builder.py` | Empty list → `None`, singular/plural noun, block structure, ticket field rendering, inter-ticket dividers, null assignee → "Unassigned", stale days in footer |
 | `handler.py` (unit) | Happy path, no tickets skips Slack, Jira error re-raised, Slack error re-raised, JQL contains configured stale days |
 | `handler.py` (integration) | Full end-to-end wiring: Secrets Manager → Jira fetch → message build → Slack POST |
@@ -211,14 +209,16 @@ Transient Jira API errors (HTTP 429, 500, 502, 503, 504) are retried automatical
 
 ## Slack Webhook Behaviour
 
-- The response body is checked in addition to the HTTP status — Slack can return `200` with an error string (e.g. `invalid_payload`) if the JSON is malformed, so a `200` alone is not sufficient to confirm success
+- The response body is checked in addition to the HTTP status — the Web API answers `200` with `{"ok": false, "error": "..."}` for every application-level failure (`not_in_channel`, `invalid_auth`, `invalid_blocks`), so a `200` alone is not sufficient to confirm success; `ratelimited` is retried like a 429
 - The HTTP status and response body are always logged before any exception is raised, so failures are observable in CloudWatch even when the exception is caught upstream
-- `post_message` returns `None`; callers only need to handle the happy path or catch `SlackClientError`
+- `post_message` returns the message `ts`; callers only need to handle the happy path or catch `SlackClientError`
 - Request timeout is 5 seconds — raises `requests.exceptions.Timeout` if Slack hangs; the exception propagates to the handler and lands the event in the DLQ
 
 ## Alarms
 
-All three alarms send email via the `DLQAlarmTopic` SNS topic (address set by the `AlertEmail` CloudFormation parameter).
+All three alarms notify the `stale-ticket-bot-alerts` SNS topic, which has one email subscription (address set by the `AlertEmail` CloudFormation parameter). **The subscription delivers nothing until the address clicks SNS's confirmation mail**; an unconfirmed subscription is silently dropped after three days and CloudFormation does not notice. After a first deploy or a topic replacement, check `aws sns get-topic-attributes --topic-arn <topic> --query Attributes.SubscriptionsConfirmed` reads `1`.
+
+Independently of this topic, the ai-incident-summarizer stack's EventBridge rule receives every alarm state change in the account, so each of these alarms also opens an incident there (Slack thread, INC ticket, Datadog event).
 
 | Alarm | Metric | Condition | Notes |
 |-------|--------|-----------|-------|
@@ -233,12 +233,13 @@ All three alarms send email via the `DLQAlarmTopic` SNS topic (address set by th
 ```
 EventBridge Scheduler (cron, 9 AM ET weekdays, America/New_York timezone)
     └── Lambda (StaleTicketBotFunction)
-            ├── Secrets Manager (jira-api-token, slack-webhook-url)
-            ├── Jira REST API  →  fetch stale tickets
-            ├── Slack Webhook  →  post Block Kit message
-            └── SQS DLQ        →  on failure
+            ├── Secrets Manager (stale-bot/jira-api-token, incident-summarizer-slackbot)
+            ├── Jira REST API        →  fetch stale tickets
+            ├── Slack chat.postMessage →  post Block Kit message to #stale-bot
+            └── SQS DLQ              →  on failure
                     └── CloudWatch Alarms (DLQ depth, Lambda errors, missing invocation)
-                            └── SNS → email
+                            ├── SNS → email (once confirmed)
+                            └── EventBridge → ai-incident-summarizer
 ```
 
 **Source layout:**

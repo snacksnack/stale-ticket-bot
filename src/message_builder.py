@@ -69,4 +69,6 @@ def build_stale_ticket_message(tickets: list, stale_days: int) -> dict | None:
         ],
     })
 
-    return {"blocks": blocks}
+    # chat.postMessage wants a plain-text fallback next to blocks; it is what
+    # notifications and screen readers show.
+    return {"text": f"Stale Ticket Reminder: {total} {noun}", "blocks": blocks}
