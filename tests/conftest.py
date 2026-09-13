@@ -11,3 +11,5 @@ os.environ.setdefault("AWS_DEFAULT_REGION", "us-east-1")
 # importing the module during collection doesn't raise KeyError.
 os.environ.setdefault("JIRA_PROJECT_KEY", "RC1")
 os.environ.setdefault("STALE_DAYS", "7")
+os.environ.setdefault("SLACK_BOT_TOKEN_SECRET_NAME", "incident-summarizer-slackbot")
+os.environ.setdefault("SLACK_CHANNEL_ID", "C0TEST")

@@ -17,6 +17,18 @@ Parameters:
   AlertEmail:
     Type: String
     Description: Email address for DLQ alarm notifications
+  SlackBotTokenSecretName:
+    Type: String
+    Default: incident-summarizer-slackbot
+    Description: >-
+      Secrets Manager secret holding the Slack bot token (a raw xoxb- string).
+      Shared with the ai-incident-summarizer stack, which owns the Slack app.
+      Replaced the bot's own incoming webhook after it was revoked on the
+      Slack side and answered 404 for two months (RC1-436).
+  SlackChannelId:
+    Type: String
+    Default: C0AVD000GLA
+    Description: Slack channel ID the reminder is posted to (#stale-bot). The bot must be a member.
 
 Globals:
   Function:
@@ -30,6 +42,8 @@ Globals:
         STALE_DAYS: !Ref StaleDays
         JIRA_BASE_URL: !Ref JiraBaseUrl
         JIRA_PROJECT_KEY: !Ref JiraProjectKey
+        SLACK_BOT_TOKEN_SECRET_NAME: !Ref SlackBotTokenSecretName
+        SLACK_CHANNEL_ID: !Ref SlackChannelId
 
 Resources:
 
@@ -56,7 +70,7 @@ Resources:
                 - secretsmanager:GetSecretValue
               Resource:
                 - !Sub arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:stale-bot/jira-api-token*
-                - !Sub arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:stale-bot/slack-webhook-url*
+                - !Sub arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${SlackBotTokenSecretName}*
             - Effect: Allow
               Action:
                 - cloudwatch:PutMetricData
@@ -94,6 +108,12 @@ Resources:
         Arn: !GetAtt StaleTicketBotFunction.Arn
         RoleArn: !GetAtt SchedulerRole.Arn
 
+  # The email subscription only delivers once the address clicks SNS's
+  # confirmation mail; an unconfirmed subscription is dropped after three
+  # days and CloudFormation never notices. Check with
+  # `aws sns get-topic-attributes` (SubscriptionsConfirmed) after a deploy.
+  # The incident summarizer also receives these alarms through its
+  # account-wide EventBridge rule, independent of this topic (RC1-435).
   AlertsTopic:
     Type: AWS::SNS::Topic
     Properties:

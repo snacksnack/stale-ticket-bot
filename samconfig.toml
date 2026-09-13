@@ -16,7 +16,7 @@ lint = true
 capabilities = "CAPABILITY_IAM"
 confirm_changeset = true
 resolve_s3 = true
-parameter_overrides = "StaleDays=7 JiraBaseUrl=https://hirereidcollins.atlassian.net JiraProjectKey=RC1"
+parameter_overrides = "StaleDays=7 JiraBaseUrl=https://hirereidcollins.atlassian.net JiraProjectKey=RC1 SlackBotTokenSecretName=incident-summarizer-slackbot SlackChannelId=C0AVD000GLA"
 
 [default.package.parameters]
 resolve_s3 = true

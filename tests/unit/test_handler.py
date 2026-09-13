@@ -1,6 +1,6 @@
 import json
 import os
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -9,7 +9,7 @@ from jira_client import JiraClientError
 from slack_client import SlackClientError
 
 JIRA_SECRET = {"email": "user@example.com", "api_token": "tok"}
-SLACK_URL = "https://hooks.slack.com/test"
+SLACK_TOKEN = "xoxb-test"
 TICKET = {
     "key": "RC1-1",
     "summary": "Fix thing",
@@ -19,13 +19,19 @@ TICKET = {
     "days_stale": 10,
 }
 
-ENV = {"JIRA_BASE_URL": "https://jira.example.com", "JIRA_PROJECT_KEY": "RC1", "STALE_DAYS": "7"}
+ENV = {
+    "JIRA_BASE_URL": "https://jira.example.com",
+    "JIRA_PROJECT_KEY": "RC1",
+    "STALE_DAYS": "7",
+    "SLACK_BOT_TOKEN_SECRET_NAME": "incident-summarizer-slackbot",
+    "SLACK_CHANNEL_ID": "C0TEST",
+}
 
 
 def _secrets_side_effect(*_args, SecretId=None, **_kwargs):
     if "jira" in SecretId:
         return {"SecretString": json.dumps(JIRA_SECRET)}
-    return {"SecretString": SLACK_URL}
+    return {"SecretString": SLACK_TOKEN}
 
 
 def _setup_jira_mock(mock_jira_cls):
@@ -46,6 +52,7 @@ def test_happy_path_posts_to_slack(mock_jira_cls, mock_slack_cls, mock_secrets, 
 
     handler.lambda_handler({}, {})
 
+    mock_slack_cls.assert_called_once_with(SLACK_TOKEN, "C0TEST")
     mock_slack_cls.return_value.post_message.assert_called_once()
 
 

@@ -40,6 +40,11 @@ _JQL = (
     f'AND updated <= "-{_STALE_DAYS}d" '
     f'ORDER BY updated ASC'
 )
+# The Slack bot token belongs to the incident summarizer's app (secret
+# `incident-summarizer-slackbot`); this stack is granted read access to it in
+# template.yaml. One Slack app for the estate, one credential to rotate.
+_SLACK_TOKEN_SECRET = os.environ["SLACK_BOT_TOKEN_SECRET_NAME"]
+_SLACK_CHANNEL_ID = os.environ["SLACK_CHANNEL_ID"]
 _secrets = boto3.client("secretsmanager")
 _cloudwatch = boto3.client("cloudwatch")
 
@@ -49,7 +54,7 @@ def lambda_handler(event, context):
     try:
         jira_raw = _secrets.get_secret_value(SecretId="stale-bot/jira-api-token")["SecretString"]
         jira_secret = json.loads(jira_raw)
-        slack_url = _secrets.get_secret_value(SecretId="stale-bot/slack-webhook-url")["SecretString"]
+        slack_token = _secrets.get_secret_value(SecretId=_SLACK_TOKEN_SECRET)["SecretString"]
 
         with JiraClient(
             base_url=os.environ["JIRA_BASE_URL"],
@@ -75,7 +80,7 @@ def lambda_handler(event, context):
             return
 
         payload = build_stale_ticket_message(tickets, _STALE_DAYS)
-        SlackClient(slack_url).post_message(payload)
+        SlackClient(slack_token, _SLACK_CHANNEL_ID).post_message(payload)
 
         logger.info("stale-ticket-bot completed", extra={"ticket_count": len(tickets)})
     except JiraClientError as exc:
