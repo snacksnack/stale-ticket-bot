@@ -189,3 +189,35 @@ def test_metric_failure_does_not_fail_lambda(mock_jira_cls, mock_slack_cls, mock
     handler.lambda_handler({}, {})
 
     mock_slack_cls.return_value.post_message.assert_called_once()
+
+
+@patch.dict(os.environ, ENV)
+@patch("handler._cloudwatch")
+@patch("handler._secrets")
+@patch("handler.SlackClient")
+@patch("handler.JiraClient")
+def test_dry_run_queries_jira_but_posts_and_records_nothing(mock_jira_cls, mock_slack_cls, mock_secrets, mock_cw):
+    _setup_jira_mock(mock_jira_cls)
+    mock_secrets.get_secret_value.side_effect = _secrets_side_effect
+    mock_jira_cls.return_value.get_stale_tickets.return_value = [TICKET]
+
+    result = handler.lambda_handler({"dry_run": True}, {})
+
+    assert result == {"dry_run": True, "ticket_count": 1}
+    mock_jira_cls.return_value.get_stale_tickets.assert_called_once()
+    mock_slack_cls.assert_not_called()
+    mock_cw.put_metric_data.assert_not_called()
+
+
+@patch.dict(os.environ, ENV)
+@patch("handler._cloudwatch")
+@patch("handler._secrets")
+@patch("handler.SlackClient")
+@patch("handler.JiraClient")
+def test_dry_run_still_raises_on_jira_failure(mock_jira_cls, mock_slack_cls, mock_secrets, mock_cw):
+    _setup_jira_mock(mock_jira_cls)
+    mock_secrets.get_secret_value.side_effect = _secrets_side_effect
+    mock_jira_cls.return_value.get_stale_tickets.side_effect = JiraClientError("boom")
+
+    with pytest.raises(JiraClientError):
+        handler.lambda_handler({"dry_run": True}, {})
