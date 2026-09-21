@@ -41,7 +41,7 @@ AWS_SAM_STACK_NAME="stale-ticket-bot" python -m pytest tests/integration -v
 
 **Execution flow** (all in `src/`):
 
-1. `handler.py` — Lambda entry point; fetches secrets from Secrets Manager, orchestrates the three modules below, logs structured JSON at start/end.
+1. `handler.py` — Lambda entry point; fetches secrets from Secrets Manager, orchestrates the three modules below, logs structured JSON at start/end. An event with `"dry_run": true` returns after the Jira query and posts or records nothing. The deploy workflow uses it as its health gate before reporting the deploy to Datadog DORA.
 2. `jira_client.py` — `get_stale_tickets(jql, max_results)` — queries Jira REST API for tickets inactive longer than `STALE_DAYS`.
 3. `message_builder.py` — `build_stale_ticket_message(tickets, stale_days)` — produces a Slack Block Kit payload.
 4. `slack_client.py` — `post_message(payload)` — POSTs to Slack `chat.postMessage` with the bot token and channel; returns the message `ts`. An `ok: false` body is an error named by Slack (`not_in_channel` means the bot was never invited), not a transport failure.

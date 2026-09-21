@@ -63,6 +63,13 @@ def lambda_handler(event, context):
         ) as jira:
             tickets = jira.get_stale_tickets(_JQL)
 
+        # The deploy workflow's health gate (RC1-459): both secrets read and a
+        # real Jira query run, but nothing is posted or recorded, so a deploy
+        # can prove the function works without messaging the channel.
+        if event.get("dry_run"):
+            logger.info("dry run, skipping metric and Slack post", extra={"ticket_count": len(tickets)})
+            return {"dry_run": True, "ticket_count": len(tickets)}
+
         try:
             _cloudwatch.put_metric_data(
                 Namespace="StaleTicketBot",

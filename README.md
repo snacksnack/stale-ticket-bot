@@ -63,7 +63,7 @@ Deployments run via GitHub Actions using OIDC — no long-lived AWS keys are sto
 | OIDC provider | `token.actions.githubusercontent.com` |
 | Deploy role ARN | `arn:aws:iam::727323477998:role/stale-ticket-bot-deploy-role` |
 
-The trust policy is scoped to the `snacksnack/stale-ticket-bot` repository. The role grants only what SAM needs: CloudFormation, Lambda, S3, IAM role creation, SQS, EventBridge Rules (for deletion of the old rule during migration), and EventBridge Scheduler.
+The trust policy is scoped to the `snacksnack/stale-ticket-bot` repository. The role grants only what SAM needs: CloudFormation, Lambda, S3, IAM role creation, SQS, EventBridge Rules (for deletion of the old rule during migration), and EventBridge Scheduler. It also grants `lambda:InvokeFunction` on this stack's function, for the deploy's dry-run health gate.
 
 ## Deployment
 
@@ -81,6 +81,8 @@ sam deploy
 ```
 
 `samconfig.toml` captures all deploy defaults (stack name, region, S3 artifact bucket) after the first guided deploy.
+
+On every push to `main`, `.github/workflows/deploy.yml` deploys and then invokes the function with `{"dry_run": true}`. That run reads both secrets and runs the real Jira query, but returns before the CloudWatch metric and the Slack post. Only if the dry run succeeds does the job register a Datadog DORA deployment as `stale-ticket-bot` (`scripts/report_dora_deployment.sh`, RC1-459). This needs `lambda:InvokeFunction` on the deploy role and the `DD_API_KEY` repo secret.
 
 ## Local Development
 

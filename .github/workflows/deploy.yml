@@ -54,6 +54,11 @@ jobs:
       - name: Build
         run: sam build
 
+      # DORA needs the deploy's start time; GITHUB_ENV is the only state that
+      # survives between steps.
+      - name: Record deploy start
+        run: echo "DEPLOY_STARTED_AT=$(date +%s)" >> "$GITHUB_ENV"
+
       - name: Deploy
         run: >
           sam deploy
@@ -65,3 +70,26 @@ jobs:
           JiraBaseUrl=${{ secrets.JIRA_BASE_URL }}
           JiraProjectKey=${{ secrets.JIRA_PROJECT_KEY }}
           StaleDays=${{ secrets.STALE_DAYS }}
+
+      # A green `sam deploy` is not proof the function runs. The dry run reads
+      # both secrets and runs the real Jira query, then returns before the
+      # metric and the Slack post, so the channel hears nothing. Needs
+      # lambda:InvokeFunction on the deploy role (RC1-459).
+      - name: Gate on a dry run of the function
+        run: |
+          set -euo pipefail
+          fn=$(aws cloudformation describe-stack-resource --stack-name ${{ env.STACK_NAME }} \
+            --logical-resource-id StaleTicketBotFunction \
+            --query StackResourceDetail.PhysicalResourceId --output text)
+          err=$(aws lambda invoke --function-name "$fn" --cli-binary-format raw-in-base64-out \
+            --payload '{"dry_run": true}' --query FunctionError --output text dry-run.json)
+          cat dry-run.json; echo
+          if [ "$err" != "None" ] || ! grep -Eq '"dry_run": ?true' dry-run.json; then
+            echo "::error::dry run of $fn failed ($err)"
+            exit 1
+          fi
+
+      - name: Report deploy to Datadog DORA
+        env:
+          DD_API_KEY: ${{ secrets.DD_API_KEY }}
+        run: scripts/report_dora_deployment.sh stale-ticket-bot "$DEPLOY_STARTED_AT"
