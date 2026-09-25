@@ -60,10 +60,15 @@ jobs:
       - name: Record deploy start
         run: echo "DEPLOY_STARTED_AT=$(date +%s)" >> "$GITHUB_ENV"
 
+      # --no-fail-on-empty-changeset: a push that touches only workflows or
+      # scripts builds an identical stack, and "No changes to deploy" must not
+      # read as a failed deploy (hit live 2026-09-25 on the RC1-464 merge; the
+      # summarizer's deploy already carries the flag).
       - name: Deploy
         run: >
           sam deploy
           --no-confirm-changeset
+          --no-fail-on-empty-changeset
           --stack-name ${{ env.STACK_NAME }}
           --region ${{ env.AWS_REGION }}
           --parameter-overrides
