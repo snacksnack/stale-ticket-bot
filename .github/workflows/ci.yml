@@ -30,6 +30,9 @@ jobs:
       # --ddtrace reports test-level results to Test Optimization, agentless.
       # Not a test credential: a missing key logs an error and runs the suite
       # untouched.
+      # RC1-468: --cov adds line coverage; ddtrace reports it as
+      # test.code_coverage.lines_pct. Coverage is a signal, not a gate — no
+      # threshold fails this step.
       - name: Test (pytest)
         env:
           DD_API_KEY: ${{ secrets.DD_API_KEY }}
@@ -37,4 +40,6 @@ jobs:
           DD_SITE: datadoghq.com
           DD_SERVICE: stale-ticket-bot
           DD_ENV: ci
-        run: pytest --ddtrace tests/ -v
+        # --cov stays last: it takes an optional value, so a following
+        # positional arg (tests/) would silently become the coverage source.
+        run: pytest --ddtrace tests/ -v --cov
