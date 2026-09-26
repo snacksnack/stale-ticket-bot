@@ -1,0 +1,40 @@
+# RC1-452. This repo had a 40-test suite and no workflow that ran it — the
+# deploy was the only gate, and a test suite that never runs is worth exactly
+# nothing. Python matches the Lambda runtime (template.yaml: python3.12).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install test dependencies
+        run: pip install -r requirements-dev.txt
+
+      # --ddtrace reports test-level results to Test Optimization, agentless.
+      # Not a test credential: a missing key logs an error and runs the suite
+      # untouched.
+      - name: Test (pytest)
+        env:
+          DD_API_KEY: ${{ secrets.DD_API_KEY }}
+          DD_CIVISIBILITY_AGENTLESS_ENABLED: "true"
+          DD_SITE: datadoghq.com
+          DD_SERVICE: stale-ticket-bot
+          DD_ENV: ci
+        run: pytest --ddtrace tests/ -v
