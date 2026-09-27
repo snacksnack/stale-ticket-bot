@@ -1,0 +1,5 @@
+# RC1-468: coverage measures what ships — the Lambda source in src/.
+# tests/conftest.py puts src/ on sys.path, so modules import as top-level
+# names; matching by directory keeps the figure tied to the deployed files.
+[run]
+source = src
